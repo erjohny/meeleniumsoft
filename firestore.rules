@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /sites/{id} {
+      // Читать: владелец всегда; остальные — только если сайт опубликован
+      allow read: if resource.data.published == true
+        || (request.auth != null && request.auth.uid == resource.data.ownerUid);
+      // Создавать: авторизованный, и только на своё имя
+      allow create: if request.auth != null
+        && request.resource.data.ownerUid == request.auth.uid;
+      // Менять/удалять: только владелец
+      allow update, delete: if request.auth != null
+        && resource.data.ownerUid == request.auth.uid;
+
+      // Фото сайта (подколлекция)
+      match /images/{img} {
+        function site() { return get(/databases/$(database)/documents/sites/$(id)).data; }
+        allow read: if site().published == true
+          || (request.auth != null && request.auth.uid == site().ownerUid);
+        allow create, delete: if request.auth != null
+          && request.auth.uid == site().ownerUid;
+      }
+
+      // Заявки с форм (регистрации/обращения)
+      match /submissions/{sub} {
+        function site() { return get(/databases/$(database)/documents/sites/$(id)).data; }
+        // Отправить заявку может любой посетитель опубликованного сайта (или сам владелец — для теста).
+        // Ограничиваем разумным размером, чтобы форму не использовали как склад данных.
+        allow create: if (site().published == true
+            || (request.auth != null && request.auth.uid == site().ownerUid))
+          && request.resource.data.fields is map
+          && request.resource.data.fields.size() <= 30;
+        // Читать и удалять заявки — только владелец сайта.
+        allow read, delete: if request.auth != null
+          && request.auth.uid == site().ownerUid;
+      }
+    }
+
+    // Короткие адреса сайтов: slugs/{slug} -> { siteId, ownerUid }
+    match /slugs/{slug} {
+      // Читать может любой — нужно, чтобы открыть сайт по красивой ссылке.
+      allow read: if true;
+      // Занять свободный адрес может авторизованный, только на себя.
+      allow create: if request.auth != null
+        && request.resource.data.ownerUid == request.auth.uid;
+      // Переназначить/освободить — только владелец адреса.
+      allow update, delete: if request.auth != null
+        && resource.data.ownerUid == request.auth.uid;
+    }
+  }
+}
